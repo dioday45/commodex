@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "commodex-dashboard"
+version = "0.1.0"
+description = "A Streamlit dashboard providing insights into global commodity markets for traders."
+authors = ["Jeremy Di Dio"]
+readme = "README.md"
+packages = [{ include = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+streamlit = "^1.35.0"
+yfinance = "^0.2.37"
+pandas = "^2.2.2"
+plotly = "^5.22.0"
+requests = "^2.32.3"
+python-dotenv = "^1.0.1"
+watchdog = "^6.0.0"
+ipykernel = "^6.29.5"
+quandl = "^3.7.0"
+selenium = "^4.33.0"
+scikit-learn = "^1.7.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
