@@ -1,6 +1,3 @@
-import src.secrets as secrets
-
-# secrets.py should contain your EIA_API_KEY as an environment variable
 import streamlit as st
 import requests
 import pandas as pd
@@ -37,7 +34,7 @@ def show_production_section():
     )
     url = "https://api.eia.gov/v2/petroleum/crd/crpdn/data/"
     params = {
-        "api_key": secrets.EIA_KEY,
+        "api_key": st.secrets["EIA_KEY"],
         "frequency": "monthly",
         "data[0]": "value",
         "sort[0][column]": "period",
