@@ -64,10 +64,12 @@ def show_futures_analysis():
 
     oil_type = st.selectbox("Choose benchmark:", ["WTI", "Brent", "Gasoline"])
 
-    years = st.slider("Select how many years to display", 1, 5, 1)
+    years = st.slider("Select how many years to display", 1, 3, 1)
 
     symbols = get_contract_symbols(oil_type, count=12 * years)
     curve = fetch_forward_curve_from_contracts(symbols).dropna()
+    symbols = symbols[symbols.index.isin(curve.index)]
+    curve = curve.astype(float)
     if curve.empty:
         st.warning("Could not fetch futures prices.")
         return
