@@ -16,7 +16,9 @@ def show_supply_demand_analysis():
         "Understanding these supply-demand dynamics is critical for analyzing oil market balance, price trends, and macroeconomic implications."
     )
 
-    tab1, tab2, tab3 = st.tabs(["Supply", "Demand", "Imports/Exports"])
+    tab1, tab2, tab3 = st.tabs(
+        ["U.S. Crude Production", "U.S. Product Supplied", "Imports/Exports"]
+    )
 
     with tab1:
         show_production_section()
@@ -34,11 +36,14 @@ def show_production_section():
         "It highlights how production is geographically distributed and how regional trends contribute to national supply. "
         "The U.S. total is calculated as the sum of all five PADDs."
     )
-    url = "https://api.eia.gov/v2/petroleum/crd/crpdn/data/"
+    url = "https://api.eia.gov/v2/petroleum/sum/snd/data/"
     params = {
         "api_key": st.secrets["EIA_KEY"],
         "frequency": "monthly",
         "data[0]": "value",
+        "facets[duoarea][]": ["R10", "R20", "R30", "R40", "R50"],
+        "facets[process][]": ["FPF"],
+        "facets[product][]": ["EPC0"],
         "sort[0][column]": "period",
         "sort[0][direction]": "desc",
         "offset": 0,
@@ -48,17 +53,11 @@ def show_production_section():
     data = r.json()
     df = pd.DataFrame(data["response"]["data"])
     # Filter only crude oil field production
-    df = df[(df["product"] == "EPC0") & (df["process"] == "FPF")]
     df["Date"] = pd.to_datetime(df["period"])
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
 
-    # Separate state-level and PADD-level rows
-    df_states = df[df["duoarea"].str.startswith("S")].copy()
-    valid_padds = ["R10", "R20", "R30", "R40", "R50"]
-    df_padds = df[df["duoarea"].isin(valid_padds)].copy()
-
     # Pivot PADD-level production
-    df_top_pivot = df_padds.pivot_table(
+    df_top_pivot = df.pivot_table(
         index="Date", columns="duoarea", values="value", aggfunc="sum"
     )
     df_top_pivot = df_top_pivot.rename(
@@ -107,52 +106,6 @@ def show_production_section():
         height=600,
     )
     st.plotly_chart(fig, use_container_width=True)
-
-    st.subheader("Top 5 Producing States (Monthly)")
-    st.markdown(
-        "This chart presents the top five U.S. oil-producing states based on cumulative output over the selected time range. "
-        "It allows you to visualize which states are the primary contributors to U.S. crude production and how their output has evolved over time."
-    )
-    # Compute top 5 states by cumulative output
-    top_states = (
-        df_states.groupby("duoarea")["value"]
-        .sum()
-        .sort_values(ascending=False)
-        .head(5)
-        .index.tolist()
-    )
-    df_top_states = df_states[df_states["duoarea"].isin(top_states)]
-    df_states_pivot = df_top_states.pivot_table(
-        index="Date", columns="duoarea", values="value", aggfunc="sum"
-    )
-    # Map readable state names
-    state_name_map = (
-        df_top_states[["duoarea", "area-name"]]
-        .drop_duplicates()
-        .set_index("duoarea")["area-name"]
-        .to_dict()
-    )
-    df_states_pivot = df_states_pivot.rename(columns=state_name_map)
-
-    fig_states = go.Figure()
-    for col in df_states_pivot.columns:
-        fig_states.add_trace(
-            go.Scatter(
-                x=df_states_pivot.index,
-                y=df_states_pivot[col],
-                mode="lines",
-                stackgroup="one",
-                name=col,
-            )
-        )
-    fig_states.update_layout(
-        title="Top 5 Producing States",
-        xaxis_title="Date",
-        yaxis_title="MMBL/D",
-        template="plotly_white",
-        height=500,
-    )
-    st.plotly_chart(fig_states, use_container_width=True)
 
     st.subheader("Summary Metrics")
     st.markdown(
