@@ -1,11 +1,8 @@
-import streamlit as st
 import numpy as np
-import requests
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.express as px
-import statsmodels.api as sm
-from statsmodels.tsa.holtwinters import ExponentialSmoothing
+import requests
+import streamlit as st
 from prophet import Prophet
 
 
@@ -127,7 +124,6 @@ def show_production_section():
     )
     latest_value = df_top_pivot["US Total"].iloc[-1]
     prev_month = df_top_pivot["US Total"].iloc[-2]
-    last_year = df_top_pivot["US Total"].iloc[-13] if len(df_top_pivot) > 12 else None
 
     # Compute additional metrics
     df_top_pivot["Growth YoY %"] = df_top_pivot["US Total"].pct_change(12) * 100

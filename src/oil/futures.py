@@ -1,13 +1,13 @@
-import yfinance as yf
-import pandas as pd
-import streamlit as st
-import plotly.graph_objects as go
-from sklearn.linear_model import LinearRegression
-
 from datetime import datetime
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+import yfinance as yf
 from dateutil.relativedelta import relativedelta
 from numpy.polynomial.polynomial import polyfit
-import numpy as np
+from sklearn.linear_model import LinearRegression
 
 
 def get_contract_symbols(
