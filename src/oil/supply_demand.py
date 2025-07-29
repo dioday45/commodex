@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import statsmodels.api as sm
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from prophet import Prophet
 
 
 def show_supply_demand_analysis():
@@ -16,26 +17,28 @@ def show_supply_demand_analysis():
         "Understanding these supply-demand dynamics is critical for analyzing oil market balance, price trends, and macroeconomic implications."
     )
 
-    tab1, tab2, tab3 = st.tabs(
-        ["U.S. Crude Production", "U.S. Product Supplied", "Imports/Exports"]
+    tab1, tab2, tab3, tab4 = st.tabs(
+        [
+            "U.S. Crude Production",
+            "U.S. Crude Consumption",
+            "Imports/Exports",
+            "Forecasting",
+        ]
     )
 
     with tab1:
         show_production_section()
     with tab2:
-        show_product_supplied_section()
+        show_consumption_section()
     with tab3:
         show_import_export_section()
+    with tab4:
+        show_forecasting_section()
 
 
 #### Production
-def show_production_section():
-    st.subheader("U.S. Crude Oil Production by PADD (Monthly)")
-    st.markdown(
-        "This chart shows monthly crude oil production across the five main Petroleum Administration for Defense Districts (PADDs). "
-        "It highlights how production is geographically distributed and how regional trends contribute to national supply. "
-        "The U.S. total is calculated as the sum of all five PADDs."
-    )
+@st.cache_data
+def fetch_production_data():
     url = "https://api.eia.gov/v2/petroleum/sum/snd/data/"
     params = {
         "api_key": st.secrets["EIA_KEY"],
@@ -51,8 +54,8 @@ def show_production_section():
     }
     r = requests.get(url, params=params)
     data = r.json()
+
     df = pd.DataFrame(data["response"]["data"])
-    # Filter only crude oil field production
     df["Date"] = pd.to_datetime(df["period"])
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
 
@@ -74,6 +77,17 @@ def show_production_section():
     df_top_pivot["US Total"] = df_top_pivot[
         ["PADD 1", "PADD 2", "PADD 3", "PADD 4", "PADD 5"]
     ].sum(axis=1)
+    return df_top_pivot
+
+
+def show_production_section():
+    st.subheader("U.S. Field Crude Oil Production by PADD (Monthly)")
+    st.markdown(
+        "This chart shows monthly crude oil production across the five main Petroleum Administration for Defense Districts (PADDs). "
+        "It highlights how production is geographically distributed and how regional trends contribute to national supply. "
+        "The U.S. total is calculated as the sum of all five PADDs."
+    )
+    df_top_pivot = fetch_production_data()
 
     # Plot total and stacked PADDs
     fig = go.Figure()
@@ -143,20 +157,117 @@ def show_production_section():
         )
 
 
-# --- Placeholder for refinery inputs section ---
-def show_product_supplied_section():
-    st.subheader("U.S. Product Supplied")
+@st.cache_data
+def fetch_consumption_data():
+    url = "https://api.eia.gov/v2/petroleum/sum/snd/data/"
+    params = {
+        "api_key": st.secrets["EIA_KEY"],
+        "frequency": "monthly",
+        "data[0]": "value",
+        "facets[duoarea][]": ["R10", "R20", "R30", "R40", "R50"],
+        "facets[product][]": ["EPC0"],
+        "facets[process][]": ["YIR"],
+        "sort[0][column]": "period",
+        "sort[0][direction]": "desc",
+        "offset": 0,
+        "length": 5000,
+    }
+    r = requests.get(url, params=params)
+    data = r.json()
+
+    df = pd.DataFrame(data["response"]["data"])
+    df["Date"] = pd.to_datetime(df["period"])
+    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+
+    df_pivot = df.pivot_table(
+        index="Date", columns="duoarea", values="value", aggfunc="sum"
+    )
+    df_pivot = df_pivot.rename(
+        columns={
+            "R10": "PADD 1",
+            "R20": "PADD 2",
+            "R30": "PADD 3",
+            "R40": "PADD 4",
+            "R50": "PADD 5",
+        }
+    )
+    df_pivot["US Total"] = df_pivot[
+        ["PADD 1", "PADD 2", "PADD 3", "PADD 4", "PADD 5"]
+    ].sum(axis=1)
+    return df_pivot
+
+
+def show_consumption_section():
+    st.subheader("U.S. Crude Oil Consumption by PADD (Monthly)")
     st.markdown(
-        "Product supplied represents the volume of petroleum products delivered to the U.S. domestic market, and is commonly used as a proxy for end-user demand. "
-        "This section helps track consumption patterns and highlight trends across key petroleum products such as gasoline, distillate, and jet fuel. "
-        "All figures are expressed in **Million Barrels per Day (MBBL/D)**."
+        "This chart shows monthly crude oil refinery input (proxy for consumption) across the five main PADDs."
     )
 
-    url = "https://api.eia.gov/v2/petroleum/cons/wpsup/data/"
+    df_pivot = fetch_consumption_data()
+
+    fig = go.Figure()
+    for col in ["PADD 1", "PADD 2", "PADD 3", "PADD 4", "PADD 5"]:
+        fig.add_trace(
+            go.Scatter(
+                x=df_pivot.index,
+                y=df_pivot[col],
+                mode="lines",
+                stackgroup="one",
+                name=col,
+            )
+        )
+
+    fig.add_trace(
+        go.Scatter(
+            x=df_pivot.index,
+            y=df_pivot["US Total"],
+            mode="lines",
+            name="US Total",
+            line=dict(width=2, color="black"),
+        )
+    )
+
+    fig.update_layout(
+        title="U.S. Crude Oil Consumption by PADD",
+        xaxis_title="Date",
+        yaxis_title="MBBL/D",
+        template="plotly_white",
+        height=600,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    latest_value = df_pivot["US Total"].iloc[-1]
+    prev_month = df_pivot["US Total"].iloc[-2]
+    df_pivot["Growth YoY %"] = df_pivot["US Total"].pct_change(12) * 100
+    df_pivot["Volatility 3M"] = df_pivot["US Total"].rolling(3).std()
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric(
+        "YoY Growth",
+        f"{df_pivot['Growth YoY %'].iloc[-1]:.2f}%",
+        f"{df_pivot['Growth YoY %'].iloc[-1] - df_pivot['Growth YoY %'].iloc[-2]:+.2f}% MoM",
+    )
+    col2.metric(
+        "Consumption Volatility (3M STD)",
+        f"{df_pivot['Volatility 3M'].iloc[-1]:.0f} MBBL/D",
+    )
+    col3.metric(
+        "Latest U.S. Consumption",
+        f"{latest_value:,.0f} MBBL/D",
+        f"{latest_value - prev_month:+.0f} MoM",
+    )
+
+
+@st.cache_data()
+def fetch_import_export_data():
+    url = "https://api.eia.gov/v2/petroleum/move/wkly/data/"
     params = {
         "api_key": st.secrets["EIA_KEY"],
         "frequency": "weekly",
         "data[0]": "value",
+        "facets[duoarea][]": ["NUS-Z00"],
+        "facets[product][]": ["EPC0"],
+        "facets[process][]": ["EEX", "IMX"],
         "sort[0][column]": "period",
         "sort[0][direction]": "desc",
         "offset": 0,
@@ -164,152 +275,7 @@ def show_product_supplied_section():
     }
     response = requests.get(url, params=params)
     data = response.json()
-    df = pd.DataFrame(data["response"]["data"])
-    # Keep relevant columns
-    df = df[["period", "product-name", "value"]]
-
-    # Convert date and value
-    df["Date"] = pd.to_datetime(df["period"])
-    df["value"] = pd.to_numeric(df["value"], errors="coerce")
-
-    # Rename columns for clarity
-    df = df.rename(columns={"product-name": "Product", "value": "Volume"})
-
-    # Divide Volume by 1000 to convert to MBBL/D
-
-    # Sort by date
-    df = df.sort_values("Date")
-
-    # Define a consistent color map by product
-    product_list = df["Product"].unique()
-    color_sequence = px.colors.qualitative.Plotly
-    color_map = {
-        prod: color_sequence[i % len(color_sequence)]
-        for i, prod in enumerate(sorted(product_list))
-    }
-
-    st.markdown(
-        "#### Product Supplied by Product Type\n"
-        "This line chart shows the weekly volume of petroleum products supplied to the U.S. market, broken down by product type. "
-        "It helps identify short-term fluctuations, seasonal patterns, and major demand disruptions such as the COVID-19 pandemic or extreme weather events."
-    )
-
-    # Line plot of product supplied with product as hue
-    fig = go.Figure()
-    for product in df["Product"].unique():
-        df_product = df[df["Product"] == product]
-        fig.add_trace(
-            go.Scatter(
-                x=df_product["Date"],
-                y=df_product["Volume"],
-                mode="lines",
-                name=product,
-                line=dict(color=color_map[product]),
-            )
-        )
-
-    fig.update_layout(
-        title="U.S. Weekly Product Supplied by Product Type (MBBL/D)",
-        xaxis_title="Date",
-        yaxis_title="MBBL/D",
-        template="plotly_white",
-        height=600,
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Pivot the data to have products as columns
-    df_wide = df.pivot(index="Date", columns="Product", values="Volume")
-    # Drop rows with missing data
-    df_wide = df_wide.dropna()
-
-    col1, col2 = st.columns(2)
-
-    col1.markdown(
-        "##### Weekly Demand Composition\n"
-        "This stacked area chart shows how each product contributes to total U.S. petroleum demand over time. "
-        "A stable or rising share suggests growing reliance on that product. "
-        "Notice how gasoline demand dominates during summer months, while distillates are more evenly distributed."
-    )
-
-    # 1. Stacked Area Chart (Demand Composition)
-    df_pct = df_wide.div(df_wide.sum(axis=1), axis=0) * 100
-    fig_stack = go.Figure()
-    for col in df_pct.columns:
-        fig_stack.add_trace(
-            go.Scatter(
-                x=df_pct.index,
-                y=df_pct[col],
-                mode="lines",
-                stackgroup="one",
-                name=col,
-                line=dict(color=color_map[col]),
-            )
-        )
-    fig_stack.update_layout(
-        title="Share of Products in Total Weekly Demand",
-        xaxis_title="Date",
-        yaxis_title="Percentage",
-        template="plotly_white",
-        height=600,
-        legend=dict(orientation="h", x=0.05, y=-0.25),
-    )
-    col1.plotly_chart(fig_stack, use_container_width=True)
-
-    col2.markdown(
-        "##### Correlation Across Product Demand\n"
-        "This heatmap shows how weekly demand for various petroleum products correlates over time. "
-        "Strong correlations may indicate shared economic drivers (e.g., gasoline and jet fuel rising together with mobility). "
-        "Negative or low correlations can signal different seasonality or use cases."
-    )
-
-    # 4. Correlation Heatmap of Products
-    corr = df_wide.corr()
-    fig_corr = go.Figure(
-        data=go.Heatmap(
-            z=corr.values,
-            x=corr.columns,
-            y=corr.index,
-            colorscale="RdBu",
-            zmid=0,
-            showscale=False,
-        )
-    )
-    fig_corr.update_layout(
-        title="Correlation Matrix of Weekly Product Volumes", height=600
-    )
-    col2.plotly_chart(fig_corr, use_container_width=True)
-
-    # --- Simplified Weekly Demand Metrics ---
-    st.markdown(
-        "#### Year-over-Year Demand Change\n"
-        "This section compares the current weekly product demand with the same week one year ago. "
-        "It highlights structural demand changes and helps differentiate between seasonal noise and longer-term shifts. "
-        "Products with strong positive YoY change may signal recovery or growing economic activity, while negative values may reflect efficiency gains or fuel switching."
-    )
-
-    df_yoy = df.copy()
-    df_yoy["YoY Change (%)"] = df_yoy.groupby("Product")["Volume"].transform(
-        lambda x: x.pct_change(52) * 100
-    )
-    latest_date = df_yoy["Date"].max()
-    df_latest = df_yoy[df_yoy["Date"] == latest_date]
-
-    num_cols = 6
-    products = df_latest["Product"].unique()
-    cols = st.columns(num_cols)
-    for idx, product in enumerate(products):
-
-        if pd.notnull(
-            df_latest[df_latest["Product"] == product]["YoY Change (%)"].values[0]
-        ):
-            with cols[idx]:
-                st.metric(
-                    label=f"{product}",
-                    value=f"{df_latest[df_latest['Product'] == product]['Volume'].values[0]:,.2f} MBBL/D",
-                    delta=f"{df_latest[df_latest['Product'] == product]['YoY Change (%)'].values[0]:+.1f}%",
-                    delta_color="normal",
-                )
+    return pd.DataFrame(data["response"]["data"])
 
 
 def show_import_export_section():
@@ -320,67 +286,30 @@ def show_import_export_section():
         "All data is sourced from the U.S. EIA and reported in Million Barrels per Day (MBBL/D)."
     )
 
-    url = "https://api.eia.gov/v2/petroleum/move/wkly/data/"
-    params = {
-        "api_key": st.secrets["EIA_KEY"],
-        "frequency": "weekly",
-        "data[0]": "value",
-        "sort[0][column]": "period",
-        "sort[0][direction]": "desc",
-        "facets[product][]": "EP00",
-        "facets[product][]": "EPC0",
-        "offset": 0,
-        "length": 5000,
-    }
-    response = requests.get(url, params=params)
-    data = response.json()
-    df = pd.DataFrame(data["response"]["data"])
+    df = fetch_import_export_data()
 
     # Clean and prepare
     df["Date"] = pd.to_datetime(df["period"])
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
-    df = df.rename(
-        columns={"product-name": "Product", "process-name": "Flow", "value": "Volume"}
-    )
-    # Only keep national-level commercial crude oil imports and exports
-    df = df[
-        (df["duoarea"] == "NUS-Z00")
-        & (df["product"] == "EPC0")
-        & (df["process"].isin(["IMX", "EEX"]))
-    ]
-
-    # Pivot to Imports and Exports by product
-    df_grouped = df.groupby(["Date", "Flow"])["Volume"].sum().unstack()
-
-    # Plot net imports (Imports - Exports)
-    df_grouped["Net Imports"] = (
-        df_grouped["Imports Excluding SPR"] - df_grouped["Exports"]
-    )
-    df_grouped = df_grouped.sort_index()
+    df = df[["Date", "process", "value"]]
+    df_imports = df[df["process"] == "IMX"]
+    df_exports = df[df["process"] == "EEX"]
 
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
-            x=df_grouped.index,
-            y=df_grouped["Imports Excluding SPR"],
+            x=df_imports["Date"],
+            y=df_imports["value"],
             name="Imports",
             line=dict(color="royalblue"),
         )
     )
     fig.add_trace(
         go.Scatter(
-            x=df_grouped.index,
-            y=df_grouped["Exports"],
+            x=df_exports["Date"],
+            y=df_exports["value"],
             name="Exports",
             line=dict(color="orange"),
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=df_grouped.index,
-            y=df_grouped["Net Imports"],
-            name="Net Imports",
-            line=dict(color="green", dash="dot"),
         )
     )
 
@@ -394,177 +323,133 @@ def show_import_export_section():
 
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("Summary Metrics")
-    st.markdown(
-        "These metrics summarize the most recent weekly trade flows for U.S. crude oil. "
-        "Net imports reflect the difference between imports and exports, indicating the U.S. trade position in crude oil."
-    )
-
-    latest = df_grouped.iloc[-1]
-    prev = df_grouped.iloc[-2]
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Latest Imports", f"{latest['Imports Excluding SPR']:.0f} MBBL/D")
-    col2.metric("Latest Exports", f"{latest['Exports']:.0f} MBBL/D")
-    col3.metric(
-        "Net Imports",
-        f"{latest['Net Imports']:.0f} MBBL/D",
-        delta=f"{latest['Net Imports'] - prev['Net Imports']:+.0f} WoW",
-    )
-
 
 def show_forecasting_section():
-
-    st.subheader("U.S. Oil Supply & Demand Forecast")
+    st.subheader("U.S. Oil Supply & Demand Forecasting Module")
     st.markdown(
-        "This section compares historical and projected U.S. oil supply and demand, using weekly data from the EIA. "
-        "Both production (supply) and product supplied (demand) are shown, with 3-month forecasts and confidence intervals."
+        "This module provides a 12-month forecast of U.S. oil supply and demand, using historical data to project future trends. "
+        "It includes confidence intervals to assess forecast uncertainty."
     )
 
-    # --- Fetch product supplied (demand) data ---
-    url = "https://api.eia.gov/v2/petroleum/cons/wpsup/data/"
-    params = {
-        "api_key": st.secrets["EIA_KEY"],
-        "frequency": "weekly",
-        "data[0]": "value",
-        "sort[0][column]": "period",
-        "sort[0][direction]": "desc",
-        "offset": 0,
-        "length": 5000,
-    }
-    response = requests.get(url, params=params)
-    data = response.json()
-    df = pd.DataFrame(data["response"]["data"])
-    df["Date"] = pd.to_datetime(df["period"])
-    df["value"] = pd.to_numeric(df["value"], errors="coerce")
-    df = df.rename(columns={"product-name": "Product", "value": "Volume"})
-    df["Volume"] = df["Volume"] / 1000  # convert to MBBL/D
-    # Aggregate total demand
-    df_total = df.groupby("Date")["Volume"].sum().sort_index()
-    df_total = df_total.asfreq("ME").interpolate()
+    production = fetch_production_data()["US Total"]
+    consumption = fetch_consumption_data()["US Total"]
 
-    # --- Fetch production data ---
-    url_prod = "https://api.eia.gov/v2/petroleum/crd/crpdn/data/"
-    params_prod = {
-        "api_key": st.secrets["EIA_KEY"],
-        "frequency": "monthly",
-        "data[0]": "value",
-        "sort[0][column]": "period",
-        "sort[0][direction]": "desc",
-        "offset": 0,
-        "length": 5000,
-    }
-    response_prod = requests.get(url_prod, params=params_prod)
-    data_prod = response_prod.json()
-    df_prod = pd.DataFrame(data_prod["response"]["data"])
-    df_prod["Date"] = pd.to_datetime(df_prod["period"])
-    df_prod["value"] = pd.to_numeric(df_prod["value"], errors="coerce")
-    # Only keep U.S. PADDs
-    df_prod = df_prod[df_prod["duoarea"].isin(["R10", "R20", "R30", "R40", "R50"])]
-    df_prod = df_prod.groupby("Date")["value"].sum().sort_index()
-    df_prod = df_prod.asfreq("W-FRI").interpolate()
-    df_prod = df_prod / 1000  # to MMBL/D
+    # Prepare data for Prophet
+    prod_df = production.reset_index()
+    prod_df.columns = ["ds", "y"]
 
-    # --- Plot historical production vs product supplied ---
-    fig_hist = go.Figure()
-    fig_hist.add_trace(
-        go.Scatter(x=df_total.index, y=df_total, name="Product Supplied")
-    )
-    fig_hist.add_trace(go.Scatter(x=df_prod.index, y=df_prod, name="Production"))
+    cons_df = consumption.reset_index()
+    cons_df.columns = ["ds", "y"]
 
-    fig_hist.update_layout(
-        title="U.S. Oil Supply vs Demand (Historical, MBBL/D)",
-        xaxis_title="Date",
-        yaxis_title="MBBL/D",
-        template="plotly_white",
-        height=500,
-    )
-    st.plotly_chart(fig_hist, use_container_width=True)
+    # Fit Prophet models
+    prod_model = Prophet()
+    prod_model.fit(prod_df)
 
-    # --- Forecast both series for 12 weeks ---
-    forecast_horizon = 12
-    fit_demand = ExponentialSmoothing(
-        df_total, seasonal="add", seasonal_periods=52
-    ).fit(optimized=True)
-    forecast_demand = fit_demand.forecast(forecast_horizon)
-    se_demand = np.std(fit_demand.resid)
-    ci_upper_d = forecast_demand + 1.96 * se_demand
-    ci_lower_d = forecast_demand - 1.96 * se_demand
+    cons_model = Prophet()
+    cons_model.fit(cons_df)
 
-    fit_prod = ExponentialSmoothing(df_prod, seasonal="add", seasonal_periods=52).fit(
-        optimized=True
-    )
-    forecast_prod = fit_prod.forecast(forecast_horizon)
-    se_prod = np.std(fit_prod.resid)
-    ci_upper_p = forecast_prod + 1.96 * se_prod
-    ci_lower_p = forecast_prod - 1.96 * se_prod
+    # Make future dataframe (3 months)
+    future_prod = prod_model.make_future_dataframe(periods=12, freq="MS")
+    forecast_prod = prod_model.predict(future_prod)
 
-    # --- Plot forecast with confidence intervals ---
-    fig_fc = go.Figure()
+    future_cons = cons_model.make_future_dataframe(periods=12, freq="MS")
+    forecast_cons = cons_model.predict(future_cons)
 
-    fig_fc.add_trace(
+    # Plot using Plotly
+    fig = go.Figure()
+
+    # Production actual and forecast
+    fig.add_trace(
         go.Scatter(
-            x=forecast_demand.index,
-            y=ci_upper_d,
-            line=dict(width=0),
-            name="Demand CI",
-            showlegend=False,
+            x=prod_df["ds"], y=prod_df["y"], name="Production Actual", mode="lines"
         )
     )
-    fig_fc.add_trace(
+    fig.add_trace(
         go.Scatter(
-            x=forecast_demand.index,
-            y=ci_lower_d,
-            fill="tonexty",
-            fillcolor="rgba(99,110,250,0.2)",
-            line=dict(width=0),
-            name="Demand Forecast CI",
-        )
-    )
-
-    fig_fc.add_trace(
-        go.Scatter(
-            x=forecast_prod.index,
-            y=ci_upper_p,
-            line=dict(width=0),
-            name="Production CI",
-            showlegend=False,
-        )
-    )
-    fig_fc.add_trace(
-        go.Scatter(
-            x=forecast_prod.index,
-            y=ci_lower_p,
-            fill="tonexty",
-            fillcolor="rgba(239,85,59,0.2)",
-            line=dict(width=0),
-            name="Production Forecast CI",
-        )
-    )
-
-    # Add forecast lines (center) for both
-    fig_fc.add_trace(
-        go.Scatter(
-            x=forecast_demand.index,
-            y=forecast_demand,
-            name="Demand Forecast",
-            line=dict(color="rgb(99,110,250)", dash="dash"),
-        )
-    )
-    fig_fc.add_trace(
-        go.Scatter(
-            x=forecast_prod.index,
-            y=forecast_prod,
+            x=forecast_prod["ds"],
+            y=forecast_prod["yhat"],
             name="Production Forecast",
-            line=dict(color="rgb(239,85,59)", dash="dash"),
+            mode="lines",
+            line=dict(dash="dash"),
         )
     )
 
-    fig_fc.update_layout(
-        title="3-Month Forecast: U.S. Oil Supply & Demand (Confidence Intervals Only)",
+    # Consumption actual and forecast
+    fig.add_trace(
+        go.Scatter(
+            x=cons_df["ds"], y=cons_df["y"], name="Consumption Actual", mode="lines"
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=forecast_cons["ds"],
+            y=forecast_cons["yhat"],
+            name="Consumption Forecast",
+            mode="lines",
+            line=dict(dash="dash"),
+        )
+    )
+
+    fig.update_layout(
+        title="3-Month Forecast of U.S. Oil Production and Consumption",
         xaxis_title="Date",
         yaxis_title="MBBL/D",
         template="plotly_white",
-        height=500,
+        height=600,
     )
-    st.plotly_chart(fig_fc, use_container_width=True)
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # --- Forecast Model Performance Metrics ---
+    st.subheader("Forecast Model Performance Metrics")
+
+    # Compute metrics for last 12 months of historical data (in-sample)
+    def compute_metrics(y_true, y_pred):
+        mae = np.mean(np.abs(y_true - y_pred))
+        rmse = np.sqrt(np.mean((y_true - y_pred) ** 2))
+        mape = np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+        return mae, rmse, mape
+
+    # For production
+    n_hist = len(prod_df)
+    y_true_prod = prod_df["y"].values[-12:]
+    y_pred_prod = forecast_prod["yhat"].values[:n_hist][-12:]
+    prod_mae, prod_rmse, prod_mape = compute_metrics(y_true_prod, y_pred_prod)
+
+    # For consumption
+    n_hist_cons = len(cons_df)
+    y_true_cons = cons_df["y"].values[-12:]
+    y_pred_cons = forecast_cons["yhat"].values[:n_hist_cons][-12:]
+    cons_mae, cons_rmse, cons_mape = compute_metrics(y_true_cons, y_pred_cons)
+
+    st.markdown(
+        "The table below summarizes the in-sample forecast errors for production and consumption models."
+    )
+
+    # Build DataFrame for metrics
+    metrics_data = {
+        "Production": [prod_mae, prod_rmse, prod_mape],
+        "Consumption": [cons_mae, cons_rmse, cons_mape],
+    }
+    metrics_index = ["MAE (MBBL/D)", "RMSE (MBBL/D)", "MAPE (%)"]
+    metrics_df = pd.DataFrame(metrics_data, index=metrics_index)
+
+    # Format: two decimals, percent for MAPE
+    def format_metric(val, is_percent=False):
+        if is_percent:
+            return f"{val:.2f}%"
+        else:
+            return f"{val:.2f}"
+
+    metrics_df_display = metrics_df.copy()
+    for idx in metrics_df_display.index:
+        if "MAPE" in idx:
+            metrics_df_display.loc[idx] = metrics_df_display.loc[idx].apply(
+                lambda v: format_metric(v, is_percent=True)
+            )
+        else:
+            metrics_df_display.loc[idx] = metrics_df_display.loc[idx].apply(
+                lambda v: format_metric(v, is_percent=False)
+            )
+
+    st.dataframe(metrics_df_display, use_container_width=True)

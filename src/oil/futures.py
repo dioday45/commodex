@@ -33,6 +33,7 @@ def get_contract_symbols(
     return pd.Series(symbols)
 
 
+@st.cache_data
 def fetch_forward_curve_from_contracts(symbols: pd.Series) -> pd.Series:
     prices = {}
     for sym in symbols:

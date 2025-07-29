@@ -4,6 +4,26 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
+@st.cache_data
+def fetch_prices(
+    symbol,
+    period,
+    interval="1d",
+    progress=False,
+    auto_adjust=True,
+    multi_level_index=False,
+):
+    df = yf.download(
+        symbol,
+        period=period,
+        interval=interval,
+        progress=progress,
+        auto_adjust=auto_adjust,
+        multi_level_index=multi_level_index,
+    )
+    return df
+
+
 def show_price_analysis():
     st.subheader("📉 Oil Price Analysis")
 
@@ -11,8 +31,8 @@ def show_price_analysis():
     symbol = "BZ=F" if ticker == "Brent" else "CL=F"
     period = st.selectbox("Period", ["1mo", "3mo", "6mo", "1y", "5y"], index=2)
 
-    df = yf.download(
-        symbol,
+    df = fetch_prices(
+        symbol=symbol,
         period=period,
         interval="1d",
         progress=False,
